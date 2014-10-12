@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import absolute_import
+import six
 from datetime import datetime
 from random import randint, randrange
 import uuid
@@ -543,10 +544,9 @@ def base_domain_matches(d1, d2):
     """
     r1 = tldextract.extract(d1)
     r2 = tldextract.extract(d2)
-    if r1.domain == r2.domain and r1.suffix == r2.suffix:
-        return True
-    else:
-        return False
+    # r1 and r2 contain subdomain, domain and suffix.
+    # We want to confirm that domain and suffix match.
+    return r1.domain == r2.domain and r1.suffix == r2.suffix
 
 
 def domain_namespace_match(domain, namespace):
@@ -570,7 +570,31 @@ def domain_namespace_match(domain, namespace):
 NameTitle = namedtuple('NameTitle', ['name', 'title'])
 
 
-class LabeledEnum(object):
+class _LabeledEnumMeta(type):
+    """Construct labeled enumeration"""
+    def __new__(cls, name, bases, attrs):
+        labels = {}
+        for key, value in tuple(attrs.items()):
+            if isinstance(value, tuple):
+                if len(value) == 2:
+                    labels[value[0]] = value[1]
+                    attrs[key] = value[0]
+                elif len(value) == 3:
+                    labels[value[0]] = NameTitle(value[1], value[2])
+                    attrs[key] = value[0]
+
+        sorted_labels = OrderedDict(sorted(labels.items()))
+        attrs['__labels__'] = sorted_labels
+        return type.__new__(cls, name, bases, attrs)
+
+    def __getitem__(cls, key):
+        return cls.__labels__[key]
+
+    def __setitem__(cls, key, value):
+        raise TypeError("LabeledEnum is immutable")
+
+
+class LabeledEnum(six.with_metaclass(_LabeledEnumMeta)):
     """
     Labeled enumerations. Declarate an enumeration with values and labels
     (for use in UI)::
@@ -609,7 +633,7 @@ class LabeledEnum(object):
         [(1, 'First'), (2, 'Second'), (3, 'Third')]
 
     Three value tuples are assumed to be (value, name, title) and the name and
-    title are converted into NameTitle(name, title):
+    title are converted into NameTitle(name, title)::
 
         >>> class NAME_ENUM(LabeledEnum):
         ...    FIRST = (1, 'first', "First")
@@ -624,33 +648,25 @@ class LabeledEnum(object):
         'second'
         >>> NAME_ENUM[NAME_ENUM.THIRD].title
         'Third'
+
+    Given a name, the value can be looked up::
+
+        >>> NAME_ENUM.value_for('first')
+        1
+        >>> NAME_ENUM.value_for('second')
+        2
     """
-    class __metaclass__(type):
-        """Construct labeled enumeration"""
-        def __new__(cls, name, bases, attrs):
-            labels = {}
-            for key, value in tuple(attrs.items()):
-                if isinstance(value, tuple):
-                    if len(value) == 2:
-                        labels[value[0]] = value[1]
-                        attrs[key] = value[0]
-                    elif len(value) == 3:
-                        labels[value[0]] = NameTitle(value[1], value[2])
-                        attrs[key] = value[0]
 
-            sorted_labels = OrderedDict(sorted(labels.items()))
-            attrs['__labels__'] = sorted_labels
-            return type.__new__(cls, name, bases, attrs)
-
-        def __getitem__(cls, key):
-            return cls.__labels__[key]
-
-        def __setitem__(cls, key, value):
-            raise TypeError("LabeledEnum is immutable")
-
-        def get(cls, key, default=None):
-            return cls.__labels__.get(key, default)
+    @classmethod
+    def get(cls, key, default=None):
+        return cls.__labels__.get(key, default)
 
     @classmethod
     def items(cls):
         return cls.__labels__.items()
+
+    @classmethod
+    def value_for(cls, name):
+        for key, value in cls.__labels__.items():
+            if isinstance(value, NameTitle) and value.name == name:
+                return key
